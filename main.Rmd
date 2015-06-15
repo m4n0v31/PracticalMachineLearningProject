@@ -1,0 +1,124 @@
+---
+title: "Practical Machine Learning Project"
+author: "Manuel"
+date: "12 giugno 2015"
+output:
+  html_document:
+    pandoc_args: [
+      "+RTS", "-K64m",
+      "-RTS"
+    ]
+---
+```{r}
+library(caret)
+```
+
+# Loading and cleaning the data
+```{r}
+training <- read.csv("pml-training.csv", na.strings=c("", "#DIV/0!", "NA") )
+dim(training)
+```
+Removing columns containing `NAs`
+```{r}
+training <- training[, colSums(is.na(training)) == 0]
+dim(training)
+```
+
+Keep predictors whose name is containing **belt, arm or dumbbell**; and convert them to numeric. Keep **classe** as well
+```{r}
+training <- training[, regexpr("belt|arm|dumbbell|classe", names(training)) >= 0]
+dim(training)
+training[, !names(training)=="classe"] <- sapply(training[, !names(training)=="classe"], as.character)
+training[, !names(training)=="classe"] <- sapply(training[, !names(training)=="classe"], as.numeric)
+```
+
+Check for nearZeroVariance predictors and eventually remove them.
+```{r}
+nzv <- nearZeroVar(training)
+if (length(nzv)){
+training <- training[, -nzv]
+dim(training)
+}
+```
+
+Check and remove highly correlated predictors.
+```{r}
+descrCor <- cor(training[, !names(training)=="classe"])
+highlyCor <- findCorrelation(descrCor, cutoff = .9)
+training <- training[, -highlyCor]
+dim(training)
+```
+The data can now be explored, preferably using plots for example featurePlots of pairs. Exploratory analysis is omitted from this report.
+
+# Partition the data
+Divide the training data in a training set (60%, `cv_trainig`) and a cross-validation testing set (40%, `cv_testing`). The cross-validation testing set will be used to estimate the out of sample accuracy of the fitted model.
+```{r}
+inTrain <- createDataPartition(training$classe, p=0.6, list=FALSE)
+cv_training <- training[inTrain, ] 
+cv_testing <- training[-inTrain, ]
+dim(cv_training)
+dim(cv_testing)
+```
+
+# Fitting the models
+Set a seed, in order to guarantee reproducibility.
+```{r}
+set.seed(11111)
+```
+Fit a random forest model and a boosted tree model to the training set.
+```{r, cache=TRUE}
+rfFit <- train(classe ~ ., data=cv_training, method="rf",
+                trControl=trainControl(method="cv",number=5),
+                allowParallel=TRUE)
+gbmFit <- train(classe ~ ., data=cv_training, method="gbm",
+                trControl=trainControl(method="cv", number=5),
+                verbose=FALSE)
+```
+Display information about the fitted models:
+**Random forest**
+```{r}
+print(rfFit)
+varImp(rfFit)
+```
+**Boosted Tree**
+```{r}
+print(gbmFit)
+varImp(gbmFit)
+```
+
+# Evaluate the models
+Evaluate the in sample accuracy
+```{r}
+confusionMatrix(predict(rfFit, cv_training),cv_training$classe)$overall[c("Accuracy")]
+```
+```{r}
+confusionMatrix(predict(gbmFit, cv_training),cv_training$classe)$overall[c("Accuracy")]
+```
+Evaluate the out of sample accuracy
+```{r}
+confusionMatrix(predict(rfFit, cv_testing),cv_testing$classe)$overall[c("Accuracy")]
+```
+```{r}
+confusionMatrix(predict(gbmFit, cv_testing),cv_testing$classe)$overall[c("Accuracy")]
+```
+With these out of sample accuracy results, I opted for the random forest model to predict the testing data outcome.
+
+# Test Data Prediction with the Random Forest Model
+```{r}
+testing <- read.csv("pml-testing.csv", na.strings=c("", "#DIV/0!", "NA") )
+answers <- predict(rfFit, testing)
+answers
+```
+
+# Prepare Submission
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  path <- "answers"
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=file.path(path, filename),quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
